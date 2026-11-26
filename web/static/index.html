@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>RDB ParcelMap · 宗地界址智能落图（锐多宝 RDB）</title>
+<link rel="stylesheet" href="static/vendor/leaflet.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Noto Sans CJK SC",sans-serif; color:#222; }
+  header { background:#173F5F; color:#fff; padding:10px 16px; display:flex; gap:12px; align-items:center; }
+  header img { width:44px; height:44px; }
+  header h1 { font-size:18px; margin:0; }
+  header p { margin:4px 0 0; font-size:12px; opacity:.9; }
+  footer { padding:10px 16px; font-size:12px; color:#555; border-top:1px solid #ddd; }
+  .lic-ok { color:#2E7D6B; font-weight:600; } .lic-no { color:#C8442C; }
+  main { display:flex; gap:10px; padding:10px; align-items:flex-start; }
+  section { background:#f7f7f5; border:1px solid #ddd; border-radius:8px; padding:10px; }
+  #left { width:300px; } #right { width:320px; }
+  #map { flex:1; height:640px; border-radius:8px; }
+  textarea { width:100%; height:180px; }
+  button { margin:4px 2px; padding:6px 10px; cursor:pointer; }
+  table { border-collapse:collapse; font-size:12px; width:100%; }
+  td, th { border:1px solid #ccc; padding:2px 4px; }
+  tr.hl td { background:#fde68a; }
+  .warn { color:#b91c1c; font-weight:600; }
+  label { font-size:13px; display:block; margin-top:6px; }
+</style>
+</head>
+<body>
+<header>
+  <img src="static/brand.svg" alt="RDB ParcelMap 品牌标">
+  <div>
+  <h1>RDB ParcelMap · 锐多宝出品 — 宗地界址智能落图</h1>
+  <p>把四至文字，一键落到图上。面向宅基地、承包地、征地红线等国内场景。辅助落图工具，成果须经人工核校，不作为测绘资质成果。卫星底图：Esri World Imagery（© Esri, Maxar, Earthstar Geographics 等，公开瓦片服务，使用须遵守其许可条款）；街道底图：© OpenStreetMap 贡献者。</p>
+  </div>
+</header>
+<main>
+  <section id="left">
+    <label>输入类型
+      <select id="kind">
+        <option value="coords">坐标串</option>
+        <option value="edges">边表文本（方位+距离）</option>
+        <option value="csv">CSV 文本</option>
+        <option value="dxf">DXF 文本</option>
+        <option value="sizhi">四至文本（仅提取四至/边长）</option>
+      </select>
+    </label>
+    <label>坐标顺序
+      <select id="order"><option value="xy">x,y（东,北）</option><option value="yx">y,x（北,东）</option></select>
+    </label>
+    <label>坐标系
+      <select id="crs"><option value="CGCS2000">CGCS2000 平面</option><option value="XIAN80">西安80 平面</option><option value="BEIJING54">北京54 平面</option><option value="WGS84">经纬度（WGS84）</option></select>
+    </label>
+    <p id="crs-note" style="font-size:12px;display:none">提示：北京54／西安80 与其他坐标系之间的转换未含地方七参数改正，仅供概算，成果须人工核校。</p>
+    <label><input type="checkbox" id="strip_band"> 剥离 CGCS2000 三度带带号前缀</label>
+    <label>粘贴坐标串 / 界址文本</label>
+    <textarea id="input">J1, 500.00, 500.00
+J2, 600.00, 500.00
+J3, 600.00, 600.00
+J4, 500.00, 600.00</textarea>
+    <label>或上传文件（CSV / DXF / TXT）<input type="file" id="file"></label>
+    <button id="btn-parse">解析落图</button>
+    <p style="font-size:12px">适用场景：宅基地与承包地确权的四至描述、征地红线附件、历史地籍档案数字化。提示：平面坐标落图时，地图按相对位置显示（以首点为锚平移到地图中心）；经纬度模式按真实位置显示。顶点可在地图上拖动微调，拖后成果区数据自动更新。</p>
+  </section>
+  <div id="map"></div>
+  <section id="right">
+    <h3 style="margin:4px 0">成果</h3>
+    <div id="report">尚未解析。</div>
+    <h4>界址点表（点击行高亮对应边）</h4>
+    <div id="table"></div>
+    <div>
+      <button data-exp="geojson">导出 GeoJSON（免费）</button>
+      <button data-exp="shp">导出 SHP(zip)（Pro）</button>
+      <button data-exp="pdf">导出界址图 PDF（Pro）</button>
+    </div>
+    <h4>Pro 授权</h4>
+    <label>授权码（RDBPM- 开头）<input type="text" id="license" style="width:100%" placeholder="粘贴授权码后点激活"></label>
+    <button id="btn-license">激活 / 验证</button>
+    <p id="license-status" style="font-size:12px">当前：免费版（解析、地图核对、GeoJSON 导出不限；SHP 与界址图 PDF 为 Pro 功能）</p>
+  </section>
+</main>
+<footer>RDB ParcelMap · 锐多宝出品 ｜ 把四至文字，一键落到图上。 ｜ 技术支持：caaschengrui@163.com ｜ 辅助落图工具，成果须经人工核校，不作为测绘资质成果</footer>
+<script src="static/vendor/leaflet.js"></script>
+<script>
+const map = L.map('map').setView([30, 114], 16);
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {attribution: 'Esri World Imagery © Esri, Maxar, Earthstar Geographics'});
+const street = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: '© OpenStreetMap 贡献者'});
+sat.addTo(map);
+L.control.layers({'卫星底图 (Esri)': sat, '街道底图 (OSM)': street}).addTo(map);
+
+let points = [], poly = null, markers = [], edgeLines = [], anchor = null;
+const isLatLng = () => document.getElementById('crs').value === 'WGS84';
+document.getElementById('crs').addEventListener('change', e => {
+  const v = e.target.value;
+  document.getElementById('crs-note').style.display = (v === 'XIAN80' || v === 'BEIJING54') ? '' : 'none';
+});
+function toLL(p) {
+  if (isLatLng()) return [p.y, p.x];
+  if (!anchor) anchor = {x: points[0].x, y: points[0].y};
+  // 平面坐标：以首点为锚，米偏移粗略换算到经纬度（仅供核对形状，非测绘定位）
+  return [30 + (p.y - anchor.y) / 111320, 114 + (p.x - anchor.x) / (111320 * Math.cos(30 * Math.PI / 180))];
+}
+function fromLL(ll) {
+  if (isLatLng()) return {x: ll.lng, y: ll.lat};
+  return {x: anchor.x + (ll.lng - 114) * 111320 * Math.cos(30 * Math.PI / 180),
+          y: anchor.y + (ll.lat - 30) * 111320};
+}
+function redraw() {
+  if (poly) map.removeLayer(poly);
+  markers.forEach(m => map.removeLayer(m)); markers = [];
+  edgeLines.forEach(l => map.removeLayer(l)); edgeLines = [];
+  if (!points.length) return;
+  poly = L.polygon(points.map(toLL), {color: '#dc2626'}).addTo(map);
+  points.forEach((p, i) => {
+    const m = L.marker(toLL(p), {draggable: true}).addTo(map).bindTooltip(p.name, {permanent: true, direction: 'top'});
+    m.on('dragend', () => { const np = fromLL(m.getLatLng()); points[i].x = np.x; points[i].y = np.y; redraw(); localReport(); });
+    markers.push(m);
+  });
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length];
+    edgeLines.push(L.polyline([toLL(a), toLL(b)], {color: '#2563eb', weight: 2, opacity: .35}).addTo(map));
+  }
+  map.fitBounds(poly.getBounds());
+}
+function shoelace(pts) { let s = 0; for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; s += a.x * b.y - b.x * a.y; } return Math.abs(s / 2); }
+function localReport() {
+  if (points.length < 3) return;
+  const a = shoelace(points);
+  document.getElementById('report').innerHTML =
+    `面积：${a.toFixed(2)} ㎡（${(a / 666.6667).toFixed(4)} 亩）<br>界址点：${points.length} 个（已按拖动微调更新，精确成果请重新导出）`;
+  renderTable();
+}
+function renderTable(data) {
+  const rows = data || points.map((p, i) => { const q = points[(i + 1) % points.length];
+    const len = Math.hypot(q.x - p.x, q.y - p.y);
+    const az = (Math.atan2(q.x - p.x, q.y - p.y) * 180 / Math.PI + 360) % 360;
+    return {from: p.name, to: q.name, x: p.x, y: p.y, length: len, azimuth_deg: az}; });
+  document.getElementById('table').innerHTML =
+    '<table><tr><th>边</th><th>X</th><th>Y</th><th>边长m</th><th>方位角°</th></tr>' +
+    rows.map((r, i) => `<tr data-i="${i}"><td>${r.from}→${r.to}</td><td>${r.x.toFixed(2)}</td><td>${r.y.toFixed(2)}</td><td>${r.length.toFixed(2)}</td><td>${r.azimuth_deg.toFixed(3)}</td></tr>`).join('') + '</table>';
+  document.querySelectorAll('#table tr[data-i]').forEach(tr => tr.onclick = () => {
+    document.querySelectorAll('#table tr').forEach(t => t.classList.remove('hl'));
+    tr.classList.add('hl');
+    edgeLines.forEach((l, i) => l.setStyle({color: i === +tr.dataset.i ? '#f59e0b' : '#2563eb', weight: i === +tr.dataset.i ? 5 : 2, opacity: 1}));
+  });
+}
+document.getElementById('file').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  f.text().then(t => { document.getElementById('input').value = t;
+    if (f.name.toLowerCase().endsWith('.csv')) document.getElementById('kind').value = 'csv';
+    if (f.name.toLowerCase().endsWith('.dxf')) document.getElementById('kind').value = 'dxf'; });
+};
+document.getElementById('btn-parse').onclick = async () => {
+  anchor = null;
+  const body = {kind: document.getElementById('kind').value, text: document.getElementById('input').value,
+    order: document.getElementById('order').value, strip_band: document.getElementById('strip_band').checked};
+  const r = await fetch('api/parse', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const d = await r.json();
+  if (d.error) { document.getElementById('report').innerHTML = '<span class="warn">' + d.error + '</span>'; return; }
+  if (d.sizhi) { document.getElementById('report').textContent = '四至提取：' + JSON.stringify(d.sizhi, null, 1); return; }
+  points = d.points;
+  let html = '';
+  if (d.summary) html += `面积：${d.summary.area_m2.toFixed(2)} ㎡（${d.summary.area_mu.toFixed(4)} 亩 / ${d.summary.area_hectare.toFixed(6)} 公顷）<br>周长：${d.summary.perimeter_m.toFixed(2)} m<br>`;
+  if (d.traverse) html += `闭合差 fx=${d.traverse.fx.toFixed(4)} fy=${d.traverse.fy.toFixed(4)}，闭合差 ${d.traverse.closure.toFixed(4)} m，相对闭合差 1/${isFinite(d.traverse.relative_closure) ? d.traverse.relative_closure.toFixed(0) : '∞'}（已按 Bowditch 法则平差）<br>`;
+  if (d.band) html += `识别到 CGCS2000 三度带带号：${d.band}<br>`;
+  (d.validation.warnings || []).forEach(w => html += `<span class="warn">${w}</span><br>`);
+  document.getElementById('report').innerHTML = html || '已解析。';
+  if (d.summary) renderTable(d.summary.boundary_table);
+  redraw();
+};
+const licInput = document.getElementById('license');
+const licStatus = document.getElementById('license-status');
+licInput.value = localStorage.getItem('rdbpm_license') || '';
+function showLic(d) {
+  if (d && d.valid) { licStatus.innerHTML = '<span class="lic-ok">已激活 Pro（' + d.plan + (d.expires ? '，到期 ' + d.expires : '，永久有效') + '）' + (d.email ? ' · ' + d.email : '') + '</span>'; }
+  else { licStatus.innerHTML = '<span class="lic-no">未激活 Pro' + (d && d.reason ? '：' + d.reason : '') + '</span>（免费版可解析、核对与导出 GeoJSON）'; }
+}
+document.getElementById('btn-license').onclick = async () => {
+  const code = licInput.value.trim();
+  localStorage.setItem('rdbpm_license', code);
+  const r = await fetch('api/license/verify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({license: code})});
+  showLic(await r.json());
+};
+if (licInput.value) document.getElementById('btn-license').click();
+document.querySelectorAll('[data-exp]').forEach(b => b.onclick = async () => {
+  if (points.length < 3) { alert('请先解析出至少 3 个界址点'); return; }
+  const fmt = b.dataset.exp;
+  const code = localStorage.getItem('rdbpm_license') || licInput.value.trim();
+  const r = await fetch('api/export/' + fmt, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-License': code},
+    body: JSON.stringify({points, crs: document.getElementById('crs').value, license: code})});
+  if (r.status === 403) { const d = await r.json(); alert(d.error || '该导出为 Pro 功能，需要有效授权码'); return; }
+  const now = new Date();
+  const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  if (fmt === 'geojson') {
+    const d = await r.json();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], {type: 'application/json'}));
+    a.download = `RDB-ParcelMap-${ymd}.geojson`; a.click();
+  } else {
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fmt === 'shp' ? `RDB-ParcelMap-${ymd}.zip` : `RDB-ParcelMap-界址图-${ymd}.pdf`; a.click();
+  }
+});
+</script>
+</body>
+</html>

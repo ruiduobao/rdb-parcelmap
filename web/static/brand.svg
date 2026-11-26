@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="RDB ParcelMap 品牌标">
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#173F5F"/>
+  <path d="M14 40 A20 20 0 1 1 50 24" fill="none" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M14 40 A20 20 0 0 0 24 50" fill="none" stroke="#2E7D6B" stroke-width="3.4" stroke-linecap="round"/>
+  <circle cx="47" cy="19" r="5" fill="#C8442C"/>
+  <circle cx="47" cy="19" r="1.8" fill="#FFFFFF"/>
+  <text x="30" y="43" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#FFFFFF" text-anchor="middle">P</text>
+</svg>
